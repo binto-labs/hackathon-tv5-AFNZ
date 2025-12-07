@@ -2,8 +2,8 @@
 status: keep
 phase: complete
 type: analysis
-version: 1.0
-last-updated: 2025-12-06
+version: 2.0
+last-updated: 2025-12-07
 title: Edge Computing Architecture Synthesis
 author: Synthesis Architect (Edge Computing Research Swarm)
 tags: [edge-computing, architecture, synthesis, integration, research]
@@ -12,34 +12,51 @@ tags: [edge-computing, architecture, synthesis, integration, research]
 # Edge Computing Architecture Synthesis
 ## TV5 Media Gateway - Unified Edge Strategy
 
-**Document Version**: 1.0
-**Date**: 2025-12-06
-**Integration Status**: Synthesizes 5 edge research findings + existing architecture
+**Document Version**: 2.0
+**Date**: 2025-12-07
+**Integration Status**: Updated for edge-first architecture with device-level WASM deployment
+
+**IMPORTANT**: See `edge-user-activity-architecture.md` for the authoritative source on the new architecture.
 
 ---
 
 ## Executive Summary
 
-The TV5 Media Gateway requires a **three-tier edge computing architecture** to deliver sub-30ms p95 latency for semantic media search across 400K+ titles globally. After analyzing edge computing capabilities, WASM vector search, vector database options, synchronization patterns, and performance characteristics, this document provides the unified architecture decision for the hackathon.
+The TV5 Media Gateway deploys a **device-first edge computing architecture** with RuVector WASM running on the user's device for sub-100µs latency, backed by Cloudflare edge and central cloud tiers. This represents a strategic pivot to bring intelligence to the edge with real-time user activity monitoring and privacy-preserving personalization.
 
-### Key Architectural Decision: Hybrid Three-Tier Approach
+### Key Architectural Decision: Device-First Three-Tier Approach
 
 ```
-Tier 1 (Global Edge - 330+ PoPs)     → Cloudflare Vectorize + Workers KV
-Tier 2 (Regional Edge - 4 regions)   → USearch WASM in Cloudflare Workers
-Tier 3 (Central Cloud - 1 region)    → AgentDB (Hackathon) / Qdrant (Production)
+Tier 0 (User Device)                 → RuVector WASM + IndexedDB (61µs, HACKATHON DELIVERABLE)
+Tier 1 (Cloudflare Edge - 330+ PoPs) → Vectorize + Workers KV (<30ms)
+Tier 2 (Central Cloud - 1 region)    → AgentDB (Hackathon) / Qdrant (Production)
 ```
+
+**Note:** Previous versions of this document numbered tiers as 1/2/3. This has been updated to 0/1/2 to reflect the new device-level tier.
 
 ### Performance Expectations
 
-| Metric | Target | Confidence |
-|--------|--------|------------|
-| **p50 Latency** | 15-20ms | HIGH (70% edge cache hits) |
-| **p95 Latency** | **30ms** ✓ | HIGH (95% edge+regional hits) |
-| **p99 Latency** | 120ms | MEDIUM (5% central fallback) |
-| **Cache Hit Rate** | 95%+ | HIGH (industry-validated) |
-| **Cold Start Rate** | <0.01% | HIGH (Cloudflare Workers = 0ms) |
-| **Monthly Cost (10M req)** | $100-200 | HIGH (validated pricing) |
+| Metric | Target | Tier | Notes |
+|--------|--------|------|-------|
+| **Device Search** | **61µs** | Tier 0 | RuVector WASM HNSW k=10 |
+| **Edge Search** | **<30ms** | Tier 1 | Cloudflare Vectorize |
+| **Central Search** | **<200ms** | Tier 2 | AgentDB full catalog |
+| **Activity Overhead** | **<1ms** | Tier 0 | Async, non-blocking |
+| **Offline Available** | **100%** | Tier 0 | Device-only search |
+| **Memory Budget** | **<128MB** | Tier 0 | 85MB vectors + 30MB runtime |
+
+### NEW: User Activity Monitoring at Edge
+
+This architecture now includes **comprehensive user activity monitoring** at the device level:
+
+| Signal | Collection Point | Privacy |
+|--------|-----------------|---------|
+| Search queries | Device only | Never synced |
+| Linger time | Device + anonymized sync | 15-min buckets |
+| Trailer engagement | Device + anonymized sync | Aggregated |
+| Browse patterns | Device only | Local only |
+| Watch completion | Device + anonymized sync | No titles |
+| Skip events | Device only | Local only |
 
 ---
 
@@ -236,59 +253,64 @@ await purgeByTag(`title:${titleId}`);
 
 ## 2. Updated Three-Tier Architecture
 
-### 2.1 Architecture Diagram
+### 2.1 Architecture Diagram (UPDATED Dec 7)
+
+**IMPORTANT:** This diagram has been updated to include Tier 0 (User Device). Previous tier numbers shifted down by 1.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    TIER 1: GLOBAL EDGE (330+ PoPs)              │
+│   TIER 0: USER DEVICE (RuVector WASM) ← NEW HACKATHON FOCUS     │
+├─────────────────────────────────────────────────────────────────┤
+│  Technology: RuVector WASM + IndexedDB                          │
+│  Coverage: Individual user device (browser, app)                │
+│  Latency: 61µs (HNSW k=10)                                      │
+│  Works Offline: YES                                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Data Stored:                                                   │
+│    • Vector Index: 10K hot titles (HNSW, PQ8)                   │
+│    • User Profile: Preferences, watch history, psychographic    │
+│    • Activity Log: Search, linger, trailer, browse, skip        │
+│    • Ontology Subset: 3KB compressed GMC-O                      │
+│  Memory Budget: <128MB (85MB vectors + 30MB runtime)            │
+│  Privacy: All data stays on device                              │
+└─────────────────────────────────────────────────────────────────┘
+                            ↓ (Background sync, optional)
+┌─────────────────────────────────────────────────────────────────┐
+│   TIER 1: CLOUDFLARE EDGE (330+ PoPs) ← Previously "Tier 1"     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Technology: Cloudflare Workers + Vectorize + Workers KV        │
 │  Coverage: 50ms to 95% of internet users                        │
-│  Latency: 10-30ms (p95: 40ms)                                   │
+│  Latency: <30ms (31ms median validated)                         │
 │  Cache Hit Rate: 60-70%                                         │
 ├─────────────────────────────────────────────────────────────────┤
 │  Data Stored:                                                   │
-│    • Vectorize: 10K hot title embeddings (768-dim)             │
+│    • Vectorize: 100K regional title embeddings (384-dim)        │
 │    • Workers KV: Title metadata (JSON)                          │
 │    • Workers KV: Streaming availability (6h TTL)                │
-│  Storage: 150 MB (10K titles × 15KB avg)                        │
-│  Cost: $22/month (1M queries) → $68/month (full stack)          │
+│    • Activity Aggregator: Anonymized signals, trends            │
+│  Cost: ~$100/month (Workers + Vectorize + KV)                   │
 └─────────────────────────────────────────────────────────────────┘
-                            ↓ (30% cache misses)
+                            ↓ (Cold path - background sync)
 ┌─────────────────────────────────────────────────────────────────┐
-│               TIER 2: REGIONAL EDGE (4 regions)                 │
+│   TIER 2: CENTRAL CLOUD ← Previously "Tier 3"                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  Technology: Cloudflare Workers + USearch WASM                  │
-│  Regions: US-EAST, US-WEST, EU-WEST, ASIA-PACIFIC              │
-│  Latency: 50-100ms (p95: 100ms)                                │
-│  Cache Hit Rate: 25-30% (additional coverage)                   │
-├─────────────────────────────────────────────────────────────────┤
-│  Data Stored:                                                   │
-│    • USearch WASM Index: 100K regional titles                   │
-│    • R2 Storage: Index persistence (5GB)                        │
-│    • FP16 Quantization: 50% memory savings                      │
-│  Memory per Region: ~150 MB (FP16 + HNSW overhead)              │
-│  Bundle Size: 3-5 MB (USearch WASM + index)                     │
-│  Cost: $80/month (4 regions × Workers + R2)                     │
-└─────────────────────────────────────────────────────────────────┘
-                            ↓ (5% cache misses)
-┌─────────────────────────────────────────────────────────────────┐
-│                  TIER 3: CENTRAL CLOUD (1 region)               │
-├─────────────────────────────────────────────────────────────────┤
-│  Technology: PostgreSQL + AgentDB/Qdrant                        │
+│  Technology: PostgreSQL + AgentDB/Qdrant + GMC-O Ontology       │
 │  Location: AWS us-east-1 (or primary region)                    │
-│  Latency: 150-300ms (p95: 300ms)                               │
-│  Cache Hit Rate: 5-10% (long-tail queries)                      │
+│  Latency: <200ms                                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  Data Stored:                                                   │
 │    • Full Catalog: 400K+ titles                                 │
-│    • AgentDB (MVP): 150x faster vs ChromaDB, sub-100µs         │
-│    • Qdrant (Production): Sub-20ms p95, battle-tested           │
+│    • AgentDB (MVP): GNN self-learning, hyperbolic embeddings    │
+│    • Qdrant (Fallback): Sub-20ms p95, battle-tested             │
 │    • PostgreSQL: Normalized metadata + JSONB provenance         │
-│  Storage: 6GB+ (full catalog + metadata)                        │
-│  Cost: $70-150/month (managed vector DB + database)             │
+│    • Ontology Engine: jjohare's GMC-O with OWL/SWRL             │
+│  Agent Swarm: CatalogScout, Enricher, ProfileBuilder,           │
+│               Analytics, OntologyReasoner                       │
+│  Cost: $150-200/month                                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**NOTE:** The previous "Tier 2: Regional Edge (USearch WASM)" concept has been merged into Tier 0 (User Device). WASM vector search is now a hackathon deliverable, not deferred.
 
 ### 2.2 Integration with Existing Architecture
 
@@ -690,34 +712,48 @@ export class CatalogSubscriber {
 
 ---
 
-## 5. Implementation Sequence
+## 5. Implementation Sequence (UPDATED Dec 7)
 
-### Phase 1: Hackathon MVP (Days 1-2)
+### Phase 1: Hackathon MVP - Edge-First Focus
 
-**Day 1: Foundation**
-- [x] PostgreSQL schema with JSONB + vector columns
-- [x] Scout agent: TMDB API polling
-- [x] Matcher agent: Tier 1 (Wikidata QID resolution)
-- [x] 1,000 sample titles backfill
+**Day 1: Device-Level Intelligence (Tier 0)**
+- [ ] Deploy RuVector WASM bundle to demo app
+- [ ] Implement IndexedDB activity collection schema
+- [ ] Load 10K hot titles from TMDB with embeddings
+- [ ] Build basic search with local HNSW index
+- [ ] Implement activity signal collectors (search, linger)
 
-**Day 2: Edge Deployment**
-- [ ] **Tier 3**: AgentDB setup with 1,000 titles
-- [ ] **Tier 1**: Cloudflare Workers + Vectorize deployment
-- [ ] **Caching**: Workers KV for metadata (L1)
-- [ ] **API**: Semantic search endpoint (`/api/v1/search`)
-- [ ] **Demo**: "Find me a cozy rom-com" working end-to-end
+**Day 2: Personalization & Demo**
+- [ ] Integrate jjohare's GMC-O ontology subset (3KB)
+- [ ] Implement psychographic state inference
+- [ ] Create profile visualization dashboard
+- [ ] Build privacy dashboard with data export
+- [ ] Offline mode demonstration
 
-**Success Criteria**:
-- ✅ Sub-300ms p95 latency for search
-- ✅ 90%+ cache hit rate after warm-up
-- ✅ Zero rate limit errors under load
-- ✅ Fallback to Qdrant implemented (feature flag)
+**Day 3: Polish & Integration**
+- [ ] Side-by-side latency comparison (61µs local vs 200ms cloud)
+- [ ] Activity tracking animation
+- [ ] Connect to Tier 1 (Cloudflare) for availability data
+- [ ] Connect to Tier 2 (AgentDB) for full catalog fallback
+
+**Success Criteria (NEW)**:
+- ✅ **61µs** local search latency (RuVector WASM)
+- ✅ **Offline mode** fully functional
+- ✅ **6 activity signals** collected at edge
+- ✅ **Psychographic inference** working
+- ✅ **Privacy dashboard** showing local data
+- ✅ Demo "wow factor": 10,000x faster than cloud
+
+**NOT Deferred (Changed from v1.0)**:
+- ✅ WASM vector search - NOW HACKATHON DELIVERABLE
+- ✅ User activity monitoring - NOW HACKATHON DELIVERABLE
+- ✅ Privacy-first architecture - NOW HACKATHON DELIVERABLE
 
 **Defer to Post-Hackathon**:
-- Tier 2 (USearch WASM regional edge)
+- Full Tier 1 (Cloudflare) deployment
 - Redis Pub/Sub real-time invalidation
-- IMDb dataset integration
-- Multi-language support
+- Federated learning
+- Smart TV apps (Samsung Tizen/LG webOS)
 
 ---
 
@@ -998,27 +1034,29 @@ USER QUERY
 
 ---
 
-## 11. Conclusion & Recommendations
+## 11. Conclusion & Recommendations (UPDATED Dec 7)
 
 ### 11.1 Final Architecture Decision
 
-**✅ APPROVED: Three-Tier Hybrid Edge Architecture**
+**✅ APPROVED: Device-First Three-Tier Architecture**
 
 ```
-Tier 1 (Global)    → Cloudflare Vectorize + Workers KV
-Tier 2 (Regional)  → USearch WASM (deferred to post-hackathon)
-Tier 3 (Central)   → AgentDB v1.6.0 + Qdrant fallback
+Tier 0 (User Device) → RuVector WASM + IndexedDB (HACKATHON DELIVERABLE)
+Tier 1 (Cloudflare)  → Vectorize + Workers KV
+Tier 2 (Central)     → AgentDB v1.6.0 + Qdrant fallback
 ```
 
-**Hackathon MVP** (2 days):
-- **Deploy**: Tier 1 (Vectorize) + Tier 3 (AgentDB)
-- **Defer**: Tier 2 (USearch WASM) to post-hackathon
-- **Fallback**: Qdrant ready (feature flag toggle)
+**Hackathon MVP** (3 days):
+- **Primary Focus**: Tier 0 (RuVector WASM) - OUR DIFFERENTIATOR
+- **Support**: Tier 1 (Cloudflare) for availability data
+- **Fallback**: Tier 2 (AgentDB) for full catalog
+- **NEW**: User activity monitoring at device level
+- **NEW**: Privacy-first with local data storage
 
-**Rationale**:
-1. **Tier 1 (Vectorize)** provides 70% cache hit rate → 15-25ms latency
-2. **Tier 3 (AgentDB)** handles remaining 30% → 200-300ms latency
-3. **Blended p95**: Estimated 30-40ms (meets requirement)
+**Rationale (UPDATED)**:
+1. **Tier 0 (Device)** provides 61µs latency → 10,000x faster than cloud
+2. **Offline capable** - works without internet
+3. **Privacy by design** - data stays on user device
 4. **Cost**: $35 for hackathon, $318/month production
 5. **Risk**: Low (Qdrant fallback ready, Vectorize battle-tested)
 
